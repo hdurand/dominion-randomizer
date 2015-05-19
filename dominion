@@ -1,0 +1,399 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""Utilities for playing with dominion.
+
+"""
+
+import sys
+import json
+import random
+import argparse
+import math
+import re
+import textwrap
+import os
+
+# Settings.
+# Colors and styles.
+PURPLE = '\033[95m'
+BLUE = '\033[94m'
+GREEN = '\033[92m'
+YELLOW = '\033[93m'
+RED = '\033[91m'
+ENDC = '\033[0m'
+BOLD = '\033[1m'
+UNDERLINE = '\033[4m'
+
+# Displayed colors.
+SET = BLUE
+CARD = RED
+VALUE = YELLOW
+DESCRIPTION = PURPLE
+START_CARD = GREEN
+TREASURE_CARD = YELLOW
+VICTORY_CARD = GREEN
+EM_INTRO = GREEN
+
+# Dominion sets.
+DOMINION_SETS = ['base', 'intrigue', 'seaside', 'alchemy', 'prosperity', 'darkages']
+UNUSED_SETS = ['cornucopia', 'guilds', 'hinterlands', 'promotional', 'adventures']
+
+def get_all_cards(jsonfile):
+    """Return all cards from a JSON file. """
+    with open(jsonfile, 'r') as data:
+        filecontent = data.read()
+        all_cards = json.loads(filecontent)
+    return all_cards
+
+def get_cards(dominion_set):
+    """Return list of cards of a dominion set. """
+    cards = []
+    for element in ALL_CARDS:
+        if element['name'] == dominion_set:
+            cards = element['cards']
+            break
+    return cards
+
+def get_darkages_cards():
+    """Return list of dark ages cards. """
+
+    cards = {}
+    all_cards = []
+    knights = {"value": "$4 or $5", "description": "<variable>\nEach other player reveals the top 2 cards of his deck, trashes one of them costing from $3 to $6, and discards the rest. If a Knight is trashed by this, trash this card.", "type": "Action – Attack [– Victory] – Knight", "name": "Knights pile"}
+    randomize = []
+    shelters = []
+    ruins = []
+    for element in ALL_CARDS:
+        if element['name'] == 'darkages':
+            all_cards = element['cards']
+            for card in all_cards:
+                if re.search('Shelter', card['type']):
+                    shelters.append(card)
+                elif re.search('Ruins', card['type']):
+                    ruins.append(card)
+                elif not re.search('Knight', card['type']) and not re.search('Spoils|Madman|Mercenary', card['name']):
+                    randomize.append(card)
+            randomize.append(knights)
+            break
+    cards['randomize'] = randomize
+    cards['shelters'] = shelters
+    cards['ruins'] = ruins
+    return cards
+
+def get_sets_names(arguments):
+    """Return a valid list of dominion sets names from arguments. """
+
+    all_sets_names = []
+    for argument in arguments:
+        if argument in DOMINION_SETS:
+            all_sets_names.append(argument)
+        else:
+            if argument in UNUSED_SETS:
+                print('Error: "' + argument + '" is not a supported dominion set.')
+                print('Help: Supported dominion sets are: ' + ', '.join(DOMINION_SETS))
+            else:
+                print('Error: "' + argument + '" is not a valid dominion set.')
+                print('Help: Valid and supported dominion sets are: ' + ', '.join(DOMINION_SETS))
+            sys.exit(0)
+    sets_names = list(set(all_sets_names))
+    if len(sets_names) != len(all_sets_names):
+        print('Error: Duplicates of dominion sets are not allowed.')
+        print('Help: Use "' + ' '.join(sets_names) + '" instead of "' + ' '.join(all_sets_names) + '".')
+        sys.exit(0)
+    return sets_names
+
+def get_count(args_count):
+    """Return balanced numbers of cards. """
+
+    count = []
+    if args_count <= 10:
+        remainder = 10 % args_count
+        for i in range(args_count):
+            if remainder == 0:
+                count.append(int(10 / args_count))
+            elif i < args_count - remainder:
+                count.append(math.floor(10 / args_count))
+            else:
+                count.append(math.ceil(10 / args_count))
+        return count
+    else:
+        print('Error: Too many dominion sets in arguments.')
+        print('Help: Maximum number of dominion sets is 10: 1 card per set makes 10 cards.')
+        sys.exit(0)
+
+def print_card(card, types, description):
+    """Print a card and required details. """
+
+    simple_str = CARD + card['name'] + ENDC +  ' -- ' + VALUE + card['value'] + ENDC
+    type_str = CARD + card['name'] + ENDC + ' -- ' + VALUE + card['value'] + ENDC + ' -- ' + card['type']
+    desc_str = CARD + card['name'] + ENDC + ' -- ' + VALUE + card['value'] + ENDC + DESCRIPTION + '\n\t# ' + card['description'] + ENDC + '\n'
+    both_str = CARD + card['name'] + ENDC + ' -- ' + VALUE + card['value'] + ENDC + ' -- ' + card['type'] + DESCRIPTION + '\n\t# ' + card['description'] + ENDC + '\n'
+
+    if types:
+        if description:
+            print(both_str)
+        else:
+            print(type_str)
+    else:
+        if description:
+            print(desc_str)
+        else:
+            print(simple_str)
+
+def print_cards(cards, sort, types, description):
+    """Print cards and required details. """
+
+    if sort:
+        sorted_cards = sorted(cards, key=lambda k: k['name'])
+    else:
+        sorted_cards = sorted(cards, key=lambda k: int(re.sub(r'\$([0-9]+).*', r'\1', k['value'])))
+    for card in sorted_cards:
+        print_card(card, types, description)
+
+def check_number(number, args_count):
+    """Return true if number of integers and number of cards are valid. """
+
+    if len(number) == args_count:
+        total = 0
+        for element in number:
+            total += element
+        if total == 10:
+            return True
+        else:
+            print('Error: Incorrect number of cards for option -n --number.')
+            print('Help: Total number of cards must be 10.')
+            sys.exit(0)
+    else:
+        print('Error: Incorrect number of integers for option -n --number.')
+        print('Help: Number of integers must be equal to number of dominion sets.')
+        sys.exit(0)
+
+def get_start_cards(sets_names):
+    """Return starting cards. """
+
+    sets_count = len(sets_names)
+    darkages_cards = get_darkages_cards()
+    shelters = darkages_cards['shelters']
+    estate = {"value": "$2", "description": "1 Victory Point", "type": "Victory", "name": "Estate"}
+    estates = [estate, estate, estate]
+    possible_cards = []
+    possible_cards += shelters
+    for i in range(sets_count - 1):
+        possible_cards += estates
+    start_cards = random.sample(possible_cards, 3)
+    return start_cards
+
+def get_treasure_cards(sets_names):
+    """Return treasure cards to use with prosperity. """
+
+    sets_count = len(sets_names)
+    copper = {"value": "$0", "description": "$1", "type": "Treasure", "name": "Copper"}
+    silver = {"value": "$3", "description": "$2", "type": "Treasure", "name": "Silver"}
+    gold = {"value": "$6", "description": "$3", "type": "Treasure", "name": "Gold"}
+    platinum = {"value": "$9", "description": "$5", "type": "Treasure", "name": "Platinum"}
+    potion = {"value": "$4", "description": "◉", "type": "Treasure", "name": "Potion"}
+    without_platinum = [copper, silver, gold]
+    with_platinum = [copper, silver, gold, platinum]
+    if 'alchemy' in sets_names:
+        without_platinum.append(potion)
+        with_platinum.append(potion)
+    possibilities = []
+    possibilities.append(True)
+    for i in range(sets_count - 1):
+        possibilities.append(False)
+    add_platinum = random.sample(possibilities, 1)
+    if add_platinum[0]:
+        treasure_cards = with_platinum
+    else:
+        treasure_cards = without_platinum
+    return treasure_cards
+
+def get_victory_cards(sets_names):
+    """Return Victory cards to use with prosperity. """
+
+    sets_count = len(sets_names)
+    estate = {"value": "$2", "description": "1 Victory Point", "type": "Victory", "name": "Estate"}
+    duchy = {"value": "$5", "description": "3 Victory Points", "type": "Victory", "name": "Duchy"}
+    province = {"value": "$8", "description": "6 Victory Points", "type": "Victory", "name": "Province"}
+    colony = {"value": "$11", "description": "10 Victory Points", "type": "Victory", "name": "Colony"}
+    without_colony = [estate, duchy, province]
+    with_colony = [estate, duchy, province, colony]
+    possibilities = []
+    possibilities.append(True)
+    for i in range(sets_count - 1):
+        possibilities.append(False)
+    add_colony = random.sample(possibilities, 1)
+    if add_colony[0]:
+        victory_cards = with_colony
+    else:
+        victory_cards = without_colony
+    return victory_cards
+
+def randomize(arguments, sort, number, types, description):
+    """Print 10 random cards from dominion sets in arguments. """
+
+    sets_names = get_sets_names(arguments)
+    args_count = len(sets_names)
+    if args_count == 1 and 'alchemy' in sets_names:
+        print('Error: Alchemy is an expansion and can\'t be played by itself.')
+        sys.exit(0)
+    if number and check_number(number, args_count):
+        count = number
+    else:
+        count = get_count(len(sets_names))
+    print('')
+    for index, set_name in enumerate(sets_names):
+        print(BOLD + SET + '**' + set_name.title() + '**' + ENDC)
+        if set_name == 'darkages':
+            darkages_cards = get_darkages_cards()
+            cards = darkages_cards['randomize']
+        else:
+            cards = get_cards(set_name)
+        picked = random.sample(cards, count[index])
+        print_cards(picked, sort, types, description)
+        print('')
+    if 'darkages' in sets_names:
+        print(BOLD + START_CARD + '**Starting cards**' + ENDC)
+        start_cards = get_start_cards(sets_names)
+        print_cards(start_cards, sort, types, description)
+        print('')
+    if 'prosperity' in sets_names:
+        print(BOLD + TREASURE_CARD + '**Treasure cards**' + ENDC)
+        treasure_cards = get_treasure_cards(sets_names)
+        print_cards(treasure_cards, sort, types, description)
+        print('')
+        print(BOLD + VICTORY_CARD + '**Victory cards**' + ENDC)
+        victory_cards = get_victory_cards(sets_names)
+        print_cards(victory_cards, sort, types, description)
+        print('')
+
+def list_sets():
+    """Print supported dominion sets. """
+    for dominion_set in DOMINION_SETS:
+        print(BOLD + SET + dominion_set + ENDC)
+
+def list_cards(lists, sort, types, description):
+    """Print cards of a dominion set. """
+
+    if lists in DOMINION_SETS:
+        print(BOLD + SET + '**' + lists.title() + '**' + ENDC)
+        cards = get_cards(lists)
+        print_cards(cards, sort, types, description)
+    elif lists in UNUSED_SETS:
+        print('Error: "' + lists + '" is not a supported dominion set.')
+        print('Help: Supported dominion sets are: ' + ', '.join(DOMINION_SETS))
+        sys.exit(0)
+    else:
+        print('Error: "' + lists + '" is not a valid dominion set.')
+        print('Help: Valid and supported dominion sets are: ' + ', '.join(DOMINION_SETS))
+        sys.exit(0)
+
+def show_card(card):
+    """Print a card. """
+
+    found = False
+    for dominion_set in ALL_CARDS:
+        for each_card in dominion_set['cards']:
+            if each_card['name'] == card:
+                print(BOLD + SET + '**' + dominion_set['name'].title() + '**' + ENDC)
+                print_card(each_card, True, True)
+                found = True
+    if not found:
+        print('Error: "' + card + '" is not a valid or supported dominion card.')
+        sys.exit(0)
+
+def handle_arguments(arguments, sort, number, types, description, lists, card):
+    """ Handle arguments and print what is required."""
+
+    if (lists and (arguments or number)) or (lists and card) or ((arguments or number) and card) or (card and sort):
+        print('Error: Incompatible arguments.')
+        print('Help: usage: ' + message())
+        sys.exit(0)
+    elif (not lists and not arguments and not card) and (sort or number or types or description):
+        print('Error: Missing argument.')
+        print('Help: usage: ' + message())
+        sys.exit(0)
+    elif arguments:
+        randomize(arguments, sort, number, types, description)
+    elif lists:
+        if lists == '1':
+            list_sets()
+        else:
+            list_cards(lists, sort, types, description)
+    elif card:
+        show_card(card)
+
+def message(name=None):
+    """Return usage message. """
+
+    msg = """
+    dominion [set [set ...] [-n [number [number ...]]] [-s] [-t] [-d]]
+    dominion [-l [set [-s] [-t] [-d]]]
+    dominion [-c card]
+    """
+    return msg
+
+def examples():
+    """Return example message. """
+
+    msg = """
+    Examples:
+        dominion base
+        Print 10 random cards from dominion base.
+
+        dominion base -s
+        Print 10 random cards from dominion base, sorted by name instead of value.
+
+        dominion base -td
+        Print 10 random cards from dominion base including their type and
+        description.
+
+        dominion base seaside
+        Print 5 random cards from dominion base and 5 random cards from dominion
+        seaside.
+
+        dominion base seaside -n 4 6
+        Print 4 random cards from dominion base and 6 random cards from dominion
+        seaside.
+
+        dominion -l
+        Print list of supported dominion sets.
+
+        dominion -l base
+        Print list of dominion base cards.
+
+        dominion -c Market
+        Print Market card details.
+
+        dominion -c "Council Room"
+        Print Council Room card details.
+    """
+    return textwrap.dedent(msg)
+
+# If no argument is given, print intro message.
+if len(sys.argv) < 2:
+    print('Usage:' + message())
+    print('Help: dominion -h')
+    print(examples())
+    sys.exit(0)
+
+# Define possible arguments.
+desc = 'Dominion cards randomizer.\n--------------------------'
+parser = argparse.ArgumentParser(description= desc, usage=message(), epilog=examples(), formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument('set', nargs='*', help='set is a dominion set name. Pick 10 random cards from this dominion set. If several sets are passed, then pick 10 random cards from all passed sets. If -n option is not used, the number of cards will be balanced between each set.')
+parser.add_argument('-n', '--number', type=int, nargs='*', help='Numbers of cards to pick from each set. The first number will be applied to the first set in argument, the second number to the second set and so on. Numbers must be integers.', metavar='number')
+parser.add_argument('-s', '--sort', help='Sort cards by card name instead of card value.', action='store_true')
+parser.add_argument('-t', '--type', help='Also print card type.', action='store_true')
+parser.add_argument('-d', '--description', help='Also print card description.', action='store_true')
+
+parser.add_argument('-l', '--list', nargs='?', const='1', help='List dominion sets if no argument is passed. List cards of a set if a dominion set name is passed.', metavar='set')
+parser.add_argument('-c', '--card', help='card is a card name. Print card details. If there are several words in the card name, use "".', metavar='card')
+
+args = parser.parse_args()
+
+# Get all data about all cards.
+CARDS_FILEPATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'cards.json')
+ALL_CARDS = get_all_cards(CARDS_FILEPATH)
+
+# Handle arguments and print what is required.
+handle_arguments(args.set, args.sort, args.number, args.type, args.description, args.list, args.card)
